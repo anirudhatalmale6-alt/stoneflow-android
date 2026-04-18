@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace 'com.base69c38750e91cd8eb3c0e3c67.app'
+    namespace 'com.stoneflow.app'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.base69c38750e91cd8eb3c0e3c67.app"
+        applicationId "com.stoneflow.app"
         minSdk 24
         targetSdk 34
         versionCode 1
