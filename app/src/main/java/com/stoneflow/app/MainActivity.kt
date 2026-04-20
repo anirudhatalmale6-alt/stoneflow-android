@@ -1,7 +1,9 @@
 package com.stoneflow.app
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
@@ -12,6 +14,8 @@ import android.widget.ProgressBar
 import android.widget.RelativeLayout
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -20,11 +24,14 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val WEB_URL = "https://stoneflow.base44.app"
+        private const val LOCATION_PERMISSION_REQUEST = 1001
     }
 
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
     private lateinit var billingManager: BillingManager
+    private var geolocationCallback: GeolocationPermissions.Callback? = null
+    private var geolocationOrigin: String? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,6 +80,7 @@ class MainActivity : AppCompatActivity() {
             mediaPlaybackRequiresUserGesture = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             cacheMode = WebSettings.LOAD_DEFAULT
+            setGeolocationEnabled(true)
             userAgentString = "$userAgentString StoneflowApp/Android"
         }
 
@@ -134,6 +142,20 @@ class MainActivity : AppCompatActivity() {
                     .setCancelable(false)
                     .show()
                 return true
+            }
+
+            override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
+                if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    callback?.invoke(origin, true, false)
+                } else {
+                    geolocationCallback = callback
+                    geolocationOrigin = origin
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity,
+                        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                        LOCATION_PERMISSION_REQUEST
+                    )
+                }
             }
         }
 
@@ -243,6 +265,16 @@ class MainActivity : AppCompatActivity() {
                 }
                 sendEventToJS("IAP_VALIDATE_RESULT", data)
             }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == LOCATION_PERMISSION_REQUEST) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            geolocationCallback?.invoke(geolocationOrigin, granted, false)
+            geolocationCallback = null
+            geolocationOrigin = null
         }
     }
 
