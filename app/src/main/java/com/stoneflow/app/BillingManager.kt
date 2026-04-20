@@ -137,9 +137,16 @@ class BillingManager(private val activity: Activity) : PurchasesUpdatedListener 
     }
 
     override fun onPurchasesUpdated(billingResult: BillingResult, purchases: MutableList<Purchase>?) {
+        Log.d(TAG, "onPurchasesUpdated: code=${billingResult.responseCode}, purchases=${purchases?.size ?: 0}")
         when (billingResult.responseCode) {
             BillingClient.BillingResponseCode.OK -> {
-                purchases?.forEach { purchase ->
+                if (purchases.isNullOrEmpty()) {
+                    Log.w(TAG, "Purchase OK but no purchases returned")
+                    purchaseCallback?.invoke(false, "Purchase completed but no receipt received.", null)
+                    return
+                }
+                purchases.forEach { purchase ->
+                    Log.d(TAG, "Purchase state: ${purchase.purchaseState}, token: ${purchase.purchaseToken.take(20)}...")
                     if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
                         acknowledgePurchase(purchase)
                         purchaseCallback?.invoke(true, null, purchase)
@@ -149,9 +156,11 @@ class BillingManager(private val activity: Activity) : PurchasesUpdatedListener 
                 }
             }
             BillingClient.BillingResponseCode.USER_CANCELED -> {
+                Log.d(TAG, "Purchase cancelled by user")
                 purchaseCallback?.invoke(false, "Purchase cancelled.", null)
             }
             else -> {
+                Log.e(TAG, "Purchase failed: code=${billingResult.responseCode}, msg=${billingResult.debugMessage}")
                 purchaseCallback?.invoke(false, "Purchase failed: ${billingResult.debugMessage}", null)
             }
         }
@@ -199,7 +208,10 @@ class BillingManager(private val activity: Activity) : PurchasesUpdatedListener 
     fun getProductInfo(): Map<String, Any?>? {
         val details = productDetails ?: return null
         val offer = details.subscriptionOfferDetails?.firstOrNull()
-        val pricingPhase = offer?.pricingPhases?.pricingPhaseList?.firstOrNull()
+        // Get the paid phase (last phase), not the free trial phase (first phase)
+        val phases = offer?.pricingPhases?.pricingPhaseList
+        val pricingPhase = phases?.lastOrNull { it.priceAmountMicros > 0 }
+            ?: phases?.lastOrNull()
 
         return mapOf(
             "productId" to details.productId,
