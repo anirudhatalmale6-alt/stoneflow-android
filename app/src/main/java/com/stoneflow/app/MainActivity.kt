@@ -150,11 +150,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sendEventToJS(type: String, data: JSONObject) {
-        val eventData = JSONObject().apply {
-            put("type", type)
-            put("data", data)
-        }
-        val js = "window.dispatchEvent(new MessageEvent('message', { data: ${eventData.toString()} }));"
+        // Put type directly into the data object so JS sees { type, products, ... }
+        // instead of { type, data: { products, ... } }
+        data.put("type", type)
+        val js = "window.dispatchEvent(new MessageEvent('message', { data: ${data.toString()} }));"
         runOnUiThread {
             webView.evaluateJavascript(js, null)
         }
@@ -196,7 +195,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 } else {
                     data.put("products", JSONArray())
-                    data.put("error", "Product not found")
+                    data.put("error", "Product not found. Billing connected: ${billingManager.isReady()}")
                 }
                 sendEventToJS("IAP_PRODUCTS_RESULT", data)
             }

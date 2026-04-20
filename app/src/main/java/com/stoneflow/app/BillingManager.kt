@@ -75,12 +75,13 @@ class BillingManager(private val activity: Activity) : PurchasesUpdatedListener 
                 .build()
 
             billingClient?.queryProductDetailsAsync(params) { billingResult, productDetailsList ->
+                Log.d(TAG, "Product query response: code=${billingResult.responseCode}, message=${billingResult.debugMessage}, products=${productDetailsList.size}")
                 if (billingResult.responseCode == BillingClient.BillingResponseCode.OK && productDetailsList.isNotEmpty()) {
                     productDetails = productDetailsList[0]
                     Log.d(TAG, "Product found: ${productDetails?.title}")
                     callback(productDetails)
                 } else {
-                    Log.e(TAG, "Product query failed: ${billingResult.debugMessage}")
+                    Log.e(TAG, "Product query failed: code=${billingResult.responseCode}, debug=${billingResult.debugMessage}, listSize=${productDetailsList.size}")
                     callback(null)
                 }
             }
@@ -204,6 +205,8 @@ class BillingManager(private val activity: Activity) : PurchasesUpdatedListener 
             "currencyCode" to (pricingPhase?.priceCurrencyCode ?: "USD")
         )
     }
+
+    fun isReady(): Boolean = isConnected
 
     fun destroy() {
         billingClient?.endConnection()
