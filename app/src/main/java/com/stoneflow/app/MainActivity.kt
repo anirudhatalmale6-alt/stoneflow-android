@@ -182,44 +182,21 @@ class MainActivity : AppCompatActivity() {
         }
 
         private fun handleRequestProducts() {
-            // Show debug info so we can diagnose billing issues
-            runOnUiThread {
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Billing Debug")
-                    .setMessage("Querying product: ${BillingManager.PRODUCT_ID}\nBilling connected: ${billingManager.isReady()}")
-                    .setPositiveButton("OK", null)
-                    .show()
-            }
-
             billingManager.queryProduct { details ->
                 val data = JSONObject()
-                val debugMsg: String
                 if (details != null) {
                     val productInfo = billingManager.getProductInfo()
                     if (productInfo != null) {
                         val productsArray = JSONArray()
                         productsArray.put(JSONObject(productInfo))
                         data.put("products", productsArray)
-                        debugMsg = "Product FOUND: ${details.title}\nPrice: ${productInfo["localizedPrice"]}"
                     } else {
                         data.put("products", JSONArray())
-                        debugMsg = "Product details returned but getProductInfo() is null"
                     }
                 } else {
                     data.put("products", JSONArray())
-                    data.put("error", "Product not found. Billing connected: ${billingManager.isReady()}")
-                    debugMsg = "Product NOT found.\nBilling connected: ${billingManager.isReady()}\nProduct ID: ${BillingManager.PRODUCT_ID}"
+                    data.put("error", "Product not found")
                 }
-
-                // Show result in a dialog
-                runOnUiThread {
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("Billing Result")
-                        .setMessage(debugMsg)
-                        .setPositiveButton("OK", null)
-                        .show()
-                }
-
                 sendEventToJS("IAP_PRODUCTS_RESULT", data)
             }
         }
