@@ -46,18 +46,24 @@ class BillingManager(private val activity: Activity) : PurchasesUpdatedListener 
 
     private fun ensureConnected(onReady: () -> Unit) {
         if (isConnected) {
+            Log.d(TAG, "Already connected, proceeding")
             onReady()
             return
         }
+        Log.d(TAG, "Not connected, attempting connection...")
         billingClient?.startConnection(object : BillingClientStateListener {
             override fun onBillingSetupFinished(billingResult: BillingResult) {
+                Log.d(TAG, "Connection attempt result: code=${billingResult.responseCode}, msg=${billingResult.debugMessage}")
                 if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                     isConnected = true
                     onReady()
+                } else {
+                    Log.e(TAG, "Billing connection failed: ${billingResult.responseCode}")
                 }
             }
             override fun onBillingServiceDisconnected() {
                 isConnected = false
+                Log.d(TAG, "Billing service disconnected")
             }
         })
     }
