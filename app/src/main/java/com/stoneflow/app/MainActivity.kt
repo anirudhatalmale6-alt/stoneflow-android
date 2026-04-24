@@ -176,8 +176,9 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
+                Log.d(TAG, "Geolocation permission prompt for origin: $origin")
                 if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                    callback?.invoke(origin, true, false)
+                    callback?.invoke(origin, true, true)
                 } else {
                     geolocationCallback = callback
                     geolocationOrigin = origin
@@ -191,6 +192,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.loadUrl(WEB_URL)
+
+        // Request location permission upfront so it's ready when the web page needs it
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                LOCATION_PERMISSION_REQUEST
+            )
+        }
     }
 
     private fun injectBridgeFlags() {
@@ -315,7 +325,8 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == LOCATION_PERMISSION_REQUEST) {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-            geolocationCallback?.invoke(geolocationOrigin, granted, false)
+            Log.d(TAG, "Location permission result: granted=$granted")
+            geolocationCallback?.invoke(geolocationOrigin, granted, true)
             geolocationCallback = null
             geolocationOrigin = null
         }
