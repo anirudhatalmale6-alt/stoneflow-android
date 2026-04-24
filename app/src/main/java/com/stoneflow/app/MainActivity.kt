@@ -2,14 +2,11 @@ package com.stoneflow.app
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.os.Environment
-import android.provider.MediaStore
 import android.util.Log
 import android.view.View
 import android.webkit.*
@@ -19,13 +16,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -42,7 +34,6 @@ class MainActivity : AppCompatActivity() {
     private var geolocationCallback: GeolocationPermissions.Callback? = null
     private var geolocationOrigin: String? = null
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
-    private var cameraImageUri: Uri? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -160,47 +151,21 @@ class MainActivity : AppCompatActivity() {
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
+                Log.d(TAG, "onShowFileChooser called")
                 fileUploadCallback?.onReceiveValue(null)
                 fileUploadCallback = filePathCallback
 
-                val acceptTypes = fileChooserParams?.acceptTypes ?: arrayOf()
-                val isImage = acceptTypes.any { it.startsWith("image/") || it == "image/*" }
-
-                val intents = mutableListOf<Intent>()
-
-                // Camera intent for photos
-                if (isImage || acceptTypes.isEmpty()) {
-                    try {
-                        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-                        val imageFile = File.createTempFile("IMG_${timeStamp}_", ".jpg", cacheDir)
-                        cameraImageUri = FileProvider.getUriForFile(this@MainActivity, "${packageName}.fileprovider", imageFile)
-                        val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
-                            putExtra(MediaStore.EXTRA_OUTPUT, cameraImageUri)
-                        }
-                        if (cameraIntent.resolveActivity(packageManager) != null) {
-                            intents.add(cameraIntent)
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to create camera intent", e)
-                    }
-                }
-
-                // File picker intent
-                val fileIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = if (acceptTypes.isNotEmpty() && acceptTypes[0].isNotEmpty()) acceptTypes[0] else "*/*"
-                    if (fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
-                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                    }
-                }
-
-                val chooserIntent = Intent.createChooser(fileIntent, "Choose file")
-                if (intents.isNotEmpty()) {
-                    chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, intents.toTypedArray())
-                }
-
                 try {
-                    startActivityForResult(chooserIntent, FILE_CHOOSER_REQUEST)
+                    val intent = fileChooserParams?.createIntent()
+                        ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "*/*"
+                        }
+
+                    startActivityForResult(
+                        Intent.createChooser(intent, "Choose file"),
+                        FILE_CHOOSER_REQUEST
+                    )
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to launch file chooser", e)
                     fileUploadCallback?.onReceiveValue(null)
@@ -340,27 +305,8 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == FILE_CHOOSER_REQUEST) {
-            if (resultCode == Activity.RESULT_OK) {
-                val results = mutableListOf<Uri>()
-
-                // Check for multiple files
-                val clipData = data?.clipData
-                if (clipData != null) {
-                    for (i in 0 until clipData.itemCount) {
-                        clipData.getItemAt(i).uri?.let { results.add(it) }
-                    }
-                } else if (data?.data != null) {
-                    // Single file from picker
-                    results.add(data.data!!)
-                } else if (cameraImageUri != null) {
-                    // Photo from camera
-                    results.add(cameraImageUri!!)
-                }
-
-                fileUploadCallback?.onReceiveValue(results.toTypedArray())
-            } else {
-                fileUploadCallback?.onReceiveValue(null)
-            }
+            val results = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+            fileUploadCallback?.onReceiveValue(results)
             fileUploadCallback = null
         }
     }
