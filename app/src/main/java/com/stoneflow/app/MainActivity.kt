@@ -7,7 +7,9 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.os.Looper
+import android.provider.MediaStore
 import android.util.Log
 import android.view.View
 import android.webkit.*
@@ -17,6 +19,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -25,6 +28,10 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -33,6 +40,7 @@ class MainActivity : AppCompatActivity() {
         private const val WEB_URL = "https://stoneflow.base44.app"
         private const val LOCATION_PERMISSION_REQUEST = 1001
         private const val FILE_CHOOSER_REQUEST = 1002
+        private const val CAMERA_PERMISSION_REQUEST = 1003
     }
 
     private lateinit var webView: WebView
@@ -42,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     private var geolocationCallback: GeolocationPermissions.Callback? = null
     private var geolocationOrigin: String? = null
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+    private var cameraPhotoUri: Uri? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -165,27 +174,10 @@ class MainActivity : AppCompatActivity() {
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
-                Log.d(TAG, "onShowFileChooser called")
+                Log.d(TAG, "onShowFileChooser called, acceptTypes: ${fileChooserParams?.acceptTypes?.joinToString()}")
                 fileUploadCallback?.onReceiveValue(null)
                 fileUploadCallback = filePathCallback
-
-                try {
-                    val intent = fileChooserParams?.createIntent()
-                        ?: Intent(Intent.ACTION_GET_CONTENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE)
-                            type = "*/*"
-                        }
-
-                    startActivityForResult(
-                        Intent.createChooser(intent, "Choose file"),
-                        FILE_CHOOSER_REQUEST
-                    )
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to launch file chooser", e)
-                    fileUploadCallback?.onReceiveValue(null)
-                    fileUploadCallback = null
-                    return false
-                }
+                launchFileChooserWithCamera(fileChooserParams)
                 return true
             }
 
@@ -207,14 +199,70 @@ class MainActivity : AppCompatActivity() {
 
         webView.loadUrl(WEB_URL)
 
-        // Request location permission upfront so it's ready when the web page needs it
+        // Request permissions upfront
+        val permissionsNeeded = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
-                LOCATION_PERMISSION_REQUEST
-            )
+            permissionsNeeded.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            permissionsNeeded.add(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            permissionsNeeded.add(Manifest.permission.CAMERA)
+        }
+        if (permissionsNeeded.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, permissionsNeeded.toTypedArray(), LOCATION_PERMISSION_REQUEST)
+        }
+    }
+
+    private fun launchFileChooserWithCamera(fileChooserParams: WebChromeClient.FileChooserParams?) {
+        val intentList = mutableListOf<Intent>()
+
+        // Camera intent
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            try {
+                val photoFile = createImageFile()
+                cameraPhotoUri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", photoFile)
+                val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                    putExtra(MediaStore.EXTRA_OUTPUT, cameraPhotoUri)
+                }
+                if (cameraIntent.resolveActivity(packageManager) != null) {
+                    intentList.add(cameraIntent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create camera intent", e)
+            }
+        }
+
+        // File picker intent
+        val acceptTypes = fileChooserParams?.acceptTypes
+        val mimeType = if (acceptTypes != null && acceptTypes.isNotEmpty() && acceptTypes[0].isNotEmpty()) {
+            acceptTypes[0]
+        } else {
+            "*/*"
+        }
+
+        val contentIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mimeType
+        }
+
+        val chooserIntent = Intent.createChooser(contentIntent, "Choose file")
+        if (intentList.isNotEmpty()) {
+            chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, intentList.toTypedArray())
+        }
+
+        try {
+            startActivityForResult(chooserIntent, FILE_CHOOSER_REQUEST)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch file chooser", e)
+            fileUploadCallback?.onReceiveValue(null)
+            fileUploadCallback = null
+        }
+    }
+
+    private fun createImageFile(): File {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+        return File.createTempFile("PHOTO_${timestamp}_", ".jpg", storageDir)
     }
 
     private fun injectBridgeFlags() {
@@ -439,9 +487,20 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == FILE_CHOOSER_REQUEST) {
-            val results = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
-            fileUploadCallback?.onReceiveValue(results)
+            if (resultCode == RESULT_OK) {
+                val results = if (data?.data != null) {
+                    arrayOf(data.data!!)
+                } else if (cameraPhotoUri != null) {
+                    arrayOf(cameraPhotoUri!!)
+                } else {
+                    null
+                }
+                fileUploadCallback?.onReceiveValue(results)
+            } else {
+                fileUploadCallback?.onReceiveValue(null)
+            }
             fileUploadCallback = null
+            cameraPhotoUri = null
         }
     }
 
