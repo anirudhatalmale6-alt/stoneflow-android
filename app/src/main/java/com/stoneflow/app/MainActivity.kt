@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.webkit.*
@@ -16,6 +17,12 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -31,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
     private lateinit var billingManager: BillingManager
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var geolocationCallback: GeolocationPermissions.Callback? = null
     private var geolocationOrigin: String? = null
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
@@ -70,6 +78,9 @@ class MainActivity : AppCompatActivity() {
         billingManager = BillingManager(this)
         billingManager.initialize()
 
+        // Initialize location client
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+
         // Configure WebView
         webView.settings.apply {
             javaScriptEnabled = true
@@ -88,6 +99,9 @@ class MainActivity : AppCompatActivity() {
 
         // Add IAP bridge
         webView.addJavascriptInterface(IAPBridge(), "iap")
+
+        // Add native location bridge
+        webView.addJavascriptInterface(LocationBridge(), "nativeLocation")
 
         // Set WebViewClient
         webView.webViewClient = object : WebViewClient() {
@@ -208,6 +222,54 @@ class MainActivity : AppCompatActivity() {
             window.isNativeApp = true;
             window.iapBridgeReady = true;
             window.nativePlatform = 'android';
+
+            // Override geolocation with native Android location for reliability
+            if (window.nativeLocation && !window.__geoPatched) {
+                window.__geoPatched = true;
+                var origGetCurrentPosition = navigator.geolocation.getCurrentPosition.bind(navigator.geolocation);
+                navigator.geolocation.getCurrentPosition = function(success, error, options) {
+                    // Try native bridge first
+                    window.nativeLocation.requestLocation();
+                    var nativeTimeout = setTimeout(function() {
+                        // Fallback to standard API with extended timeout
+                        origGetCurrentPosition(success, error, {
+                            enableHighAccuracy: true,
+                            timeout: 30000,
+                            maximumAge: 60000
+                        });
+                    }, 5000);
+
+                    // Listen for native location result
+                    window.__nativeLocationSuccess = function(lat, lng, accuracy) {
+                        clearTimeout(nativeTimeout);
+                        success({
+                            coords: {
+                                latitude: lat,
+                                longitude: lng,
+                                accuracy: accuracy,
+                                altitude: null,
+                                altitudeAccuracy: null,
+                                heading: null,
+                                speed: null
+                            },
+                            timestamp: Date.now()
+                        });
+                        window.__nativeLocationSuccess = null;
+                        window.__nativeLocationError = null;
+                    };
+                    window.__nativeLocationError = function(msg) {
+                        clearTimeout(nativeTimeout);
+                        // Fall back to standard API
+                        origGetCurrentPosition(success, error, {
+                            enableHighAccuracy: true,
+                            timeout: 30000,
+                            maximumAge: 60000
+                        });
+                        window.__nativeLocationSuccess = null;
+                        window.__nativeLocationError = null;
+                    };
+                };
+            }
         """.trimIndent()
         webView.evaluateJavascript(js, null)
     }
@@ -306,6 +368,68 @@ class MainActivity : AppCompatActivity() {
                 }
                 sendEventToJS("IAP_VALIDATE_RESULT", data)
             }
+        }
+    }
+
+    @Suppress("unused")
+    inner class LocationBridge {
+        @JavascriptInterface
+        fun requestLocation() {
+            Log.d(TAG, "Native location requested")
+            if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                Log.e(TAG, "Location permission not granted")
+                runOnUiThread {
+                    webView.evaluateJavascript("if(window.__nativeLocationError) window.__nativeLocationError('Permission denied');", null)
+                }
+                return
+            }
+
+            // Try last known location first for instant response
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                if (location != null) {
+                    Log.d(TAG, "Got last known location: ${location.latitude}, ${location.longitude}")
+                    runOnUiThread {
+                        webView.evaluateJavascript(
+                            "if(window.__nativeLocationSuccess) window.__nativeLocationSuccess(${location.latitude}, ${location.longitude}, ${location.accuracy});",
+                            null
+                        )
+                    }
+                } else {
+                    requestFreshLocation()
+                }
+            }.addOnFailureListener {
+                Log.e(TAG, "Last location failed", it)
+                requestFreshLocation()
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        private fun requestFreshLocation() {
+            Log.d(TAG, "Requesting fresh location")
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000)
+                .setMaxUpdates(1)
+                .setMaxUpdateDelayMillis(15000)
+                .build()
+
+            fusedLocationClient.requestLocationUpdates(request, object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    fusedLocationClient.removeLocationUpdates(this)
+                    val location = result.lastLocation
+                    if (location != null) {
+                        Log.d(TAG, "Got fresh location: ${location.latitude}, ${location.longitude}")
+                        runOnUiThread {
+                            webView.evaluateJavascript(
+                                "if(window.__nativeLocationSuccess) window.__nativeLocationSuccess(${location.latitude}, ${location.longitude}, ${location.accuracy});",
+                                null
+                            )
+                        }
+                    } else {
+                        runOnUiThread {
+                            webView.evaluateJavascript("if(window.__nativeLocationError) window.__nativeLocationError('Could not determine location');", null)
+                        }
+                    }
+                }
+            }, Looper.getMainLooper())
         }
     }
 
